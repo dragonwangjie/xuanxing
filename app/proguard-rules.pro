@@ -4,7 +4,7 @@
 # kotlinx.serialization 生成的 serializer 与运行时 Companion/metadata 反射查找；
 # R8 全模式默认会破坏这些构件，典型症状即「MCP 工具传递参数失败 /
 # Serializer for class ... is not found / arguments 丢失」。
-# 本文件 = kotlinx.serialization 官方推荐规则 + MCP SDK + JNI 兜底。
+# 本文件 = kotlinx.serialization 官方推荐规则 + MCP SDK + JNI + ktor 兜底。
 
 # ── 属性保留（注解/泛型签名/Kotlin metadata 运行时可见）──────────
 -keepattributes *Annotation*, Signature, InnerClasses, EnclosingMethod, RuntimeVisibleAnnotations, AnnotationDefault
@@ -36,9 +36,6 @@
     public static <1> INSTANCE;
     kotlinx.serialization.KSerializer serializer(...);
 }
-# @Serializable and @Polymorphic are used at runtime for polymorphic serialization.
-# Don't print notes about potential mistakes or omissions in the configuration for kotlinx-serialization classes
--dontnote kotlinx.serialization.**
 # Serialization core uses `java.lang.ClassValue` for caching inside these specified classes.
 -dontwarn kotlinx.serialization.internal.ClassValueReferences
 # disable optimisation for descriptor field because in some versions of ProGuard, optimization generates incorrect bytecode that causes a verification error
@@ -82,6 +79,9 @@
 }
 
 # ── 三方库噪音抑制（缺类是 Android 平台正常现象，不阻断构建）──────
+# ktor 的 IntellijIdeaDebugDetector 引用了 JDK 的 java.lang.management.*，
+# Android 上不存在；R8 full mode 会把它保留下来并直接报 CompilationFailedException。
+-dontwarn io.ktor.**
 -dontwarn org.slf4j.**
 -dontwarn javax.naming.**
 -dontwarn java.awt.**
