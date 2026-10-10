@@ -42,6 +42,9 @@ jobs:
     name: 构建并发布 Release
     runs-on: ubuntu-latest
     env:
+      # CI 关闭国内镜像：aliyun 镜像在海外 runner 上不稳定，会让插件解析失败
+      # （例如报 com.google.devtools.ksp:...:2.3.4 not found），改用官方仓库。
+      XUANXING_CN_MIRROR: "0"
       # keystore 解码后的落盘位置，配合 app/build.gradle.kts 读取 local.properties 的签名配置
       STORE_FILE: ${{ github.workspace }}/release.keystore
     steps:
@@ -122,6 +125,16 @@ jobs:
           } > local.properties
           keytool -list -keystore "$STORE_FILE" -storepass "$STORE_PWD" >/dev/null
           echo "keystore 校验通过，本次使用正式签名"
+
+      # 网络预检：若构建阶段报插件/依赖解析失败，这一步能立即看出 runner
+      # 到各官方仓库是否通（HTTP 200/303 为正常）。
+      - name: 依赖仓库连通性预检
+        run: |
+          P=com/google/devtools/ksp/com.google.devtools.ksp.gradle.plugin/2.3.4/com.google.devtools.ksp.gradle.plugin-2.3.4.pom
+          for u in https://repo.maven.apache.org/maven2 https://plugins.gradle.org/m2 https://dl.google.com/dl/android/maven2; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' -m 30 "$u/$P")
+            echo "$u -> $code"
+          done
 
       - name: 打包 Release APK
         run: |
