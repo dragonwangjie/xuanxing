@@ -1,120 +1,87 @@
-# Add project specific ProGuard rules here.
-# You can control the set of applied configuration files using the
-# proguardFiles setting in build.gradle.
-#
-# For more details, see
-#   http://developer.android.com/guide/developing/tools/proguard.html
+# ── 玄星 Release 混淆规则 ─────────────────────────────────────────
+# 背景：release 构建开启了 R8 代码混淆（isMinifyEnabled=true）。
+# MCP 工具调用、设置持久化、OpenAI/Anthropic 请求体等核心链路全部依赖
+# kotlinx.serialization 生成的 serializer 与运行时 Companion/metadata 反射查找；
+# R8 全模式默认会破坏这些构件，典型症状即「MCP 工具传递参数失败 /
+# Serializer for class ... is not found / arguments 丢失」。
+# 本文件 = kotlinx.serialization 官方推荐规则 + MCP SDK + JNI 兜底。
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
-
-# Uncomment this to preserve the line number information for
-# debugging stack traces.
--keepattributes SourceFile,LineNumberTable
-
-# If you keep the line number information, uncomment this to
-# hide the original source file name.
-#-renamesourcefileattribute SourceFile
-
-# keep kotlinx serializable classes
--keep @kotlinx.serialization.Serializable class * {*;}
-
-# keep jlatexmath
--keep class org.scilab.forge.jlatexmath.** {*;}
-
--dontwarn com.google.re2j.**
-
-# Ktor 在 Android 上引用了仅 JVM 可用的 java.lang.management 类（IntellijIdeaDebugDetector）
-# Android 不包含这些类，需要告知 R8 忽略
--dontwarn java.lang.management.ManagementFactory
--dontwarn java.lang.management.RuntimeMXBean
-
-# java.beans is not available on Android; Jackson references it only on JVM
--dontwarn java.beans.ConstructorProperties
--dontwarn java.beans.Transient
-
-# auth0/jackson: TypeReference subclasses rely on runtime generic signatures.
-# R8 strips Signature/InnerClasses/EnclosingMethod by default, and its class
-# merging/inlining optimizations can destroy the anonymous class hierarchy that
-# TypeReference.<init> depends on via getClass().getGenericSuperclass().
--keepattributes Signature, InnerClasses, EnclosingMethod
--keep class com.fasterxml.jackson.** { *; }
--keep class com.auth0.jwt.** { *; }
-
-# ======================================================================
-# 玄星：开启混淆后的 keep 规则（保证反射/序列化框架不被混淆破坏）
-# ======================================================================
-
-# ---- 注解 / 泛型信息（序列化、反射都依赖） ----
--keepattributes *Annotation*, Signature, InnerClasses, EnclosingMethod, RuntimeVisible*Annotations, AnnotationDefault
-
-# ---- kotlinx.serialization ----
-# 保留所有 @Serializable 类自动生成的 $$serializer 伴生对象与 serializer() 方法
--keepclassmembers class **$$serializer { *; }
--keepclasseswithmembers class kotlinx.serialization.** { *; }
--keep,includedescriptorclasses class me.rerere.**$$serializer { *; }
--keepclassmembers class me.rerere.** {
-    *** Companion;
-    kotlinx.serialization.KSerializer serializer(...);
-}
--keepclasseswithmembers,allowshrinking class me.rerere.** {
-    kotlinx.serialization.KSerializer serializer(...);
-}
-# 保留所有本项目 @Serializable 数据类的成员（配置/会话/模型都靠它存 JSON）
--keep @kotlinx.serialization.Serializable class me.rerere.** { *; }
--if @kotlinx.serialization.Serializable class **
--keepclassmembers class <1> {
-    static <1>$Companion Companion;
-}
-
-# ---- Koin（依赖注入，用反射构造 ViewModel / 单例） ----
--keep class org.koin.** { *; }
--keepnames class * { @org.koin.core.annotation.* <methods>; }
--dontwarn org.koin.**
-
-# ---- Room（编译期生成 _Impl 类，运行时反射加载） ----
--keep class * extends androidx.room.RoomDatabase { *; }
--keep @androidx.room.Entity class * { *; }
--keep @androidx.room.Dao class * { *; }
--dontwarn androidx.room.**
--keep class androidx.room.** { *; }
-
-# ---- Retrofit / OkHttp / Okio ----
--keepattributes Exceptions
--keep,allowobfuscation,allowshrinking interface retrofit2.Call
--keep,allowobfuscation,allowshrinking class retrofit2.Response
--keep,allowobfuscation,allowshrinking class kotlin.coroutines.Continuation
--dontwarn retrofit2.**
--dontwarn okhttp3.**
--dontwarn okio.**
--keep class okhttp3.** { *; }
--keep interface okhttp3.** { *; }
-
-# ---- Ktor client ----
--keep class io.ktor.** { *; }
--keepclassmembers class io.ktor.** { volatile <fields>; }
--dontwarn io.ktor.**
--dontwarn kotlinx.coroutines.**
-
-# ---- Kotlin 元数据 / 协程 ----
+# ── 属性保留（注解/泛型签名/Kotlin metadata 运行时可见）──────────
+-keepattributes *Annotation*, Signature, InnerClasses, EnclosingMethod, RuntimeVisibleAnnotations, AnnotationDefault
 -keep class kotlin.Metadata { *; }
--keepclassmembers class **$WhenMappings { <fields>; }
--keepclassmembers class kotlin.Metadata { public <methods>; }
+-dontnote kotlinx.serialization.**
 
-# ---- 枚举（序列化常用） ----
+# ── kotlinx.serialization 官方推荐规则 ────────────────────────────
+# Keep `Companion` object field of serializable classes.
+-keepclassmembers @kotlinx.serialization.Serializable class ** {
+    static ** Companion;
+}
+# Keep names for named companion object from obfuscation
+-if @kotlinx.serialization.internal.NamedCompanion class *
+-keepclassmembers class * {
+    static <1> *;
+}
+# Keep `serializer()` on companion objects (both default and named) of serializable classes.
+-if @kotlinx.serialization.Serializable class ** {
+    static **$* *;
+}
+-keepclassmembers class <2>$<3> {
+    kotlinx.serialization.KSerializer serializer(...);
+}
+# Keep `INSTANCE.serializer()` of serializable objects.
+-if @kotlinx.serialization.Serializable class ** {
+    public static ** INSTANCE;
+}
+-keepclassmembers class <1> {
+    public static <1> INSTANCE;
+    kotlinx.serialization.KSerializer serializer(...);
+}
+# @Serializable and @Polymorphic are used at runtime for polymorphic serialization.
+# Don't print notes about potential mistakes or omissions in the configuration for kotlinx-serialization classes
+-dontnote kotlinx.serialization.**
+# Serialization core uses `java.lang.ClassValue` for caching inside these specified classes.
+-dontwarn kotlinx.serialization.internal.ClassValueReferences
+# disable optimisation for descriptor field because in some versions of ProGuard, optimization generates incorrect bytecode that causes a verification error
+-keepclassmembers public class **$$serializer {
+    private ** descriptor;
+}
+# Rule to save runtime annotations on serializable class.
+# If the R8 full mode is used, annotations are removed from classes-files.
+-keepattributes RuntimeVisibleAnnotations,AnnotationDefault
+
+# ── 玄星自有包：settings/datastore/ai 的 DTO 走名称/反射查找 ──────
+-keep,includedescriptorclasses class me.rerere.rikkahub.**$$serializer { *; }
+-keepclassmembers class me.rerere.rikkahub.** {
+    *** Companion;
+}
+-keepclasseswithmembers class me.rerere.rikkahub.** {
+    kotlinx.serialization.KSerializer serializer(...);
+}
+-keep,includedescriptorclasses class me.rerere.ai.**$$serializer { *; }
+-keepclassmembers class me.rerere.ai.** {
+    *** Companion;
+}
+-keepclasseswithmembers class me.rerere.ai.** {
+    kotlinx.serialization.KSerializer serializer(...);
+}
+
+# ── MCP 协议 SDK：全部消息/类型（JSON-RPC、tools/call arguments）──
+# 协议 DTO 的类名与成员名都会参与运行时查找，整体不参与混淆，体积代价极小。
+-keep class io.modelcontextprotocol.** { *; }
+
+# ── 枚举：R8 full mode 会移除未被直接引用的 values()/valueOf()，
+#    而序列化器与配置回读经常反射调用它们 ──────────────────────────
 -keepclassmembers enum * {
     public static **[] values();
     public static ** valueOf(java.lang.String);
 }
 
-# ---- Parcelable ----
--keepclassmembers class * implements android.os.Parcelable {
-    public static final ** CREATOR;
+# ── JNI：workspace/termux 的 native 方法按名字绑定，禁止改名 ──────
+-keepclasseswithmembernames,includedescriptorclasses class * {
+    native <methods>;
 }
 
-# ---- 反射构造的 ViewModel ----
--keep class * extends androidx.lifecycle.ViewModel { *; }
+# ── 三方库噪音抑制（缺类是 Android 平台正常现象，不阻断构建）──────
+-dontwarn org.slf4j.**
+-dontwarn javax.naming.**
+-dontwarn java.awt.**
