@@ -1,0 +1,68 @@
+name: Build Test APK
+
+# 自用测试打包：手动点击即可触发，产出可直接安装的 debug APK。
+# 已移除 Firebase，无需 google-services.json；debug 构建用自动签名，无需任何密钥。
+on:
+  workflow_dispatch:   # 在 GitHub 网页 Actions 页面手动点击 "Run workflow" 触发
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码（含子模块，必须 recursive）
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # AGP 9.x 需要 JDK 21（AGP 8.2 才用 17）
+      - name: 安装 JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      # web 模块的 preBuild 会执行前端构建，需要 Node + pnpm
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web-ui/pnpm-lock.yaml
+
+      - name: 安装 web-ui 依赖
+        working-directory: web-ui
+        run: pnpm install --frozen-lockfile
+
+      - name: Gradle 缓存
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+
+      - name: 打包 Debug APK
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --stacktrace
+
+      # 项目启用了 ABI 拆分，会产出多个 APK：
+      #   app-universal-debug.apk  —— 通用包，兼容所有手机，装这个最省心（推荐）
+      #   app-arm64-v8a-debug.apk  —— 仅 64 位 ARM 手机（体积更小）
+      #   app-x86_64-debug.apk     —— 仅 x86_64 设备/模拟器
+      - name: 列出产物
+        run: ls -lh app/build/outputs/apk/debug/
+
+      # 上传 APK，构建完成后在本次运行页面底部 "Artifacts" 处下载 rikkahub-debug-apk.zip
+      - name: 上传 APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: rikkahub-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 30

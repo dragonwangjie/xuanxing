@@ -1,0 +1,53 @@
+# ── Gradle / Android Build Artifacts ─────────────────────────────
+# Note: use build/ (no leading slash) so EVERY module's build dir is ignored;
+# a leading /build only matched the root and left app/build, ai/build ... in
+# git status, which would push hundreds of MB of artifacts to GitHub.
+build/
+bin/
+.gradle/
+.kotlin/
+.externalNativeBuild/
+.cxx/
+captures/
+*.iml
+
+# ── IDE / Editor ─────────────────────────────────────────────────
+.idea/
+*.ipr
+*.iws
+.vscode/
+.cursor/
+.history/
+.fleet/
+.DS_Store
+
+# ── Local-only config (per-machine, never commit) ────────────────
+local.properties
+
+# ── Signing keys / secrets (NEVER commit) ────────────────────────
+*.jks
+*.keystore
+*.p12
+*.key
+*.pem
+app/google-services.json
+app/app.key
+*.sample
+
+# ── Frontend (web-ui, React Router + pnpm) ───────────────────────
+node_modules/
+web-ui/build/
+web-ui/dist/
+web-ui/.react-router/
+web-ui/.output/
+web-ui/.env
+web-ui/.env.*
+
+# ── Misc ─────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.log
+.claude/
+*.bak
+*.orig
+*.rej
