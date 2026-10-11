@@ -64,7 +64,17 @@
 
 # ── MCP 协议 SDK：全部消息/类型（JSON-RPC、tools/call arguments）──
 # 协议 DTO 的类名与成员名都会参与运行时查找，整体不参与混淆，体积代价极小。
+# 注意：-keep class ... { *; } 只保留类名不混淆，字段名仍会被 R8 改名
+# （例如 CallToolRequestParams.arguments → a），导致服务端收不到参数。
+# 因此必须同时 keep 字段名（-keepmembers）+ 注解（-keepattributes）。
 -keep class io.modelcontextprotocol.** { *; }
+-keepmembers class io.modelcontextprotocol.** {
+    public protected private *;
+}
+-keep class io.modelcontextprotocol.kotlin.sdk.** { *; }
+-keepmembers class io.modelcontextprotocol.kotlin.sdk.** {
+    public protected private *;
+}
 
 # ── 枚举：R8 full mode 会移除未被直接引用的 values()/valueOf()，
 #    而序列化器与配置回读经常反射调用它们 ──────────────────────────
