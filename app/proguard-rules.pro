@@ -66,13 +66,13 @@
 # 协议 DTO 的类名与成员名都会参与运行时查找，整体不参与混淆，体积代价极小。
 # 注意：-keep class ... { *; } 只保留类名不混淆，字段名仍会被 R8 改名
 # （例如 CallToolRequestParams.arguments → a），导致服务端收不到参数。
-# 因此必须同时 keep 字段名（-keepmembers）+ 注解（-keepattributes）。
+# 因此必须同时 keep 字段名（-keepclassmembers）+ 注解（-keepattributes）。
 -keep class io.modelcontextprotocol.** { *; }
--keepmembers class io.modelcontextprotocol.** {
+-keepclassmembers class io.modelcontextprotocol.** {
     public protected private *;
 }
 -keep class io.modelcontextprotocol.kotlin.sdk.** { *; }
--keepmembers class io.modelcontextprotocol.kotlin.sdk.** {
+-keepclassmembers class io.modelcontextprotocol.kotlin.sdk.** {
     public protected private *;
 }
 
