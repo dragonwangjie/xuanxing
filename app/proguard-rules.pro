@@ -68,13 +68,14 @@
 # （例如 CallToolRequestParams.arguments → a），导致服务端收不到参数。
 # 因此必须同时 keep 字段名（-keepclassmembers）+ 注解（-keepattributes）。
 -keep class io.modelcontextprotocol.** { *; }
--keepclassmembers class io.modelcontextprotocol.** {
-    public protected private *;
-}
+-keepclassmembers class io.modelcontextprotocol.** { *; }
 -keep class io.modelcontextprotocol.kotlin.sdk.** { *; }
--keepclassmembers class io.modelcontextprotocol.kotlin.sdk.** {
-    public protected private *;
-}
+-keepclassmembers class io.modelcontextprotocol.kotlin.sdk.** { *; }
+
+# ── kotlinx.serialization.json：JsonObject/JsonArray 的序列化器与工厂
+# 也必须完整保留，否则 arguments 会被序列化成空对象 {}。
+-keep class kotlinx.serialization.json.** { *; }
+-keepclassmembers class kotlinx.serialization.json.** { *; }
 
 # ── 枚举：R8 full mode 会移除未被直接引用的 values()/valueOf()，
 #    而序列化器与配置回读经常反射调用它们 ──────────────────────────
