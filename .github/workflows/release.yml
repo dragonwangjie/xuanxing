@@ -126,6 +126,44 @@ jobs:
           keytool -list -keystore "$STORE_FILE" -storepass "$STORE_PWD" >/dev/null
           echo "keystore 校验通过，本次使用正式签名"
 
+      # :workspace 模块启用了 CMake 原生构建，需要 NDK（版本由 workspace/build.gradle.kts
+      # 的 ndkVersion 固定）。交给 AGP 自动下载时偶发 "Error reading Zip content from a
+      # SeekableByteChannel"（下载包损坏）导致整轮构建报废，这里显式预装并重试。
+      # 用 `bash {0}` 接管 shell：默认 `bash -eo pipefail` 下 `yes | sdkmanager` 会因
+      # yes 收到 SIGPIPE 退出 141，被 pipefail 误判为失败。
+      - name: 预装 NDK（带重试，规避 AGP 自动下载损坏）
+        shell: bash {0}
+        env:
+          NDK_VERSION: "28.2.13676358"
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f 2>/dev/null | head -1)"
+          fi
+          echo "using sdkmanager: ${SDKMANAGER:-none}"
+          if [ -z "${SDKMANAGER:-}" ] || [ -z "${ANDROID_HOME:-}" ]; then
+            echo "runner 上没有 sdkmanager/ANDROID_HOME，交给 AGP 自行下载"
+            exit 0
+          fi
+          yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses > /dev/null 2>&1
+          ok=0
+          for attempt in 1 2 3 4 5; do
+            echo "--- sdkmanager attempt $attempt ---"
+            if yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" "ndk;$NDK_VERSION"; then
+              ok=1
+              echo "NDK 安装成功（attempt $attempt）"
+              break
+            fi
+            echo "attempt $attempt 失败，清理半成品后重试"
+            rm -rf "$ANDROID_HOME/ndk/$NDK_VERSION"
+            sleep 5
+          done
+          if [ "$ok" != "1" ]; then
+            echo "sdkmanager 安装失败，最终交给 AGP 再试一次"
+          fi
+          ls -d "$ANDROID_HOME/ndk/"* 2>/dev/null
+          exit 0
+
       # 网络预检：若构建阶段报插件/依赖解析失败，这一步能立即看出 runner
       # 到各官方仓库是否通（HTTP 200/303 为正常）。
       - name: 依赖仓库连通性预检
