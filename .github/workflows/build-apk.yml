@@ -8,6 +8,9 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      # CI 关闭国内镜像：aliyun 镜像在海外 runner 上不稳定，会让插件解析失败
+      XUANXING_CN_MIRROR: "0"
     steps:
       - name: 检出代码（含子模块，必须 recursive）
         uses: actions/checkout@v4
