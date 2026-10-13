@@ -13,17 +13,14 @@ import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
  * - Kotlin compilerOptions opt-in 声明
  * - targetSdk 统一
  *
- * 使用：在子模块 build.gradle.kts 中 `plugins { id("xuanxing.android.library") }`
- * 替代手动写 android {} 配置块。
+ * 注意：本 plugin 不自行 apply "com.android.library" / "org.jetbrains.kotlin.android"，
+ * 而是要求子模块在 plugins{} 块中用 alias(libs.plugins.android.library) 声明。
+ * 这样 Gradle 的类型安全访问器（android {}）才能正常生成。
+ * 本 plugin 只负责配置已应用插件的扩展。
  */
 class AndroidLibraryConventionPlugin : Plugin<Project> {
     override fun apply(target: Project) {
         with(target) {
-            with(pluginManager) {
-                apply("com.android.library")
-                apply("org.jetbrains.kotlin.android")
-            }
-
             extensions.configure<com.android.build.api.dsl.LibraryExtension> {
                 compileSdk = 37
 
