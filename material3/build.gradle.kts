@@ -1,34 +1,11 @@
 plugins {
     alias(libs.plugins.android.library)
-    alias(libs.plugins.kotlin.compose)
+    id("xuanxing.android.library")
 }
 
 android {
-    namespace = "me.rerere.material3"
-    compileSdk = 37
-
-    defaultConfig {
-        minSdk = 26
-
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        consumerProguardFiles("consumer-rules.pro")
-    }
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
-    }
-    buildFeatures {
-        compose = true
-    }
+    namespace = "me.rerere.rikkahub.material3"
     sourceSets {
-        named("main") {
-            kotlin.srcDir("material-color-utilities/kotlin")
-        }
+        getByName("main").java.srcDir("../material-color-utilities/java")
     }
-}
-
-dependencies {
-    implementation(platform(libs.androidx.compose.bom))
-    implementation(libs.androidx.material3)
-    testImplementation(libs.junit)
 }

@@ -160,6 +160,32 @@ fun SettingPreferencesGeneralPage(vm: SettingVM = koinViewModel()) {
                             )
                         },
                     )
+                    // 玄星：自动重试开关（同步自 RikkaHub 2.4.16）
+                    item(
+                        headlineContent = { Text("自动重试") },
+                        supportingContent = { Text("网络错误或服务器异常时自动重试请求（3次，指数退避）。关闭后遇到网络波动将立即失败。") },
+                        trailingContent = {
+                            Switch(
+                                checked = displaySetting.enableAutoRetry,
+                                onCheckedChange = {
+                                    updateDisplaySetting(displaySetting.copy(enableAutoRetry = it))
+                                }
+                            )
+                        },
+                    )
+                    // 玄星：消息发送队列（同步自 RikkaHub 2.5.0）
+                    item(
+                        headlineContent = { Text("消息发送队列") },
+                        supportingContent = { Text("回复期间可继续输入消息，自动排队发送。支持编辑或撤销待发送消息。") },
+                        trailingContent = {
+                            Switch(
+                                checked = displaySetting.enableMessageQueue,
+                                onCheckedChange = {
+                                    updateDisplaySetting(displaySetting.copy(enableMessageQueue = it))
+                                }
+                            )
+                        },
+                    )
                     item(
                         headlineContent = { Text(stringResource(R.string.setting_display_page_enable_message_generation_haptic_effect_title)) },
                         supportingContent = { Text(stringResource(R.string.setting_display_page_enable_message_generation_haptic_effect_desc)) },

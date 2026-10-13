@@ -655,7 +655,6 @@ enum class ChatFontFamily {
     @SerialName("custom")
     CUSTOM,
 }
-
 @Serializable
 data class DisplaySetting(
     val userAvatar: Avatar = Avatar.Dummy,
@@ -693,6 +692,11 @@ data class DisplaySetting(
     val chatFontFamily: ChatFontFamily = ChatFontFamily.DEFAULT,
     val chatCustomFontPath: String = "",
     val chatCustomFontName: String = "",
+    // 玄星：网络自动重试开关（同步自 RikkaHub 2.4.16）
+    val enableAutoRetry: Boolean = true,
+    // 玄星：消息发送队列
+    val enableMessageQueue: Boolean = false,
+    val enableVoiceMode: Boolean = false,
     val enableVolumeKeyScroll: Boolean = false,
     val volumeKeyScrollRatio: Float = 1.0f,
 )

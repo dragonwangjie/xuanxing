@@ -6,6 +6,7 @@ import org.apache.tools.ant.taskdefs.condition.Os
 // 访问器，用 apply() 应用时不会生成，配置阶段会直接 "Unresolved reference: android"。
 plugins {
     alias(libs.plugins.android.library)
+    id("xuanxing.android.library")
 }
 
 val webUiDir = rootProject.layout.projectDirectory.dir("web-ui")
@@ -47,27 +48,8 @@ val buildWebUi = tasks.register<Exec>("buildWebUi") {
 
 android {
     namespace = "me.rerere.rikkahub.web"
-    compileSdk = 37
-
     defaultConfig {
         minSdk = 24
-
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        consumerProguardFiles("consumer-rules.pro")
-    }
-
-    buildTypes {
-        release {
-            isMinifyEnabled = false
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
-            )
-        }
-    }
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
     }
 }
 

@@ -50,6 +50,7 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "rikkahub"
+includeBuild("build-logic")
 include(":app")
 include(":highlight")
 include(":ai")
