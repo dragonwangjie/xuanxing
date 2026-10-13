@@ -4,6 +4,7 @@ import android.content.Context
 import com.whl.quickjs.wrapper.QuickJSArray
 import com.whl.quickjs.wrapper.QuickJSContext
 import com.whl.quickjs.wrapper.QuickJSObject
+import me.rerere.rikkahub.highlight.R
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
