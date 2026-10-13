@@ -7,9 +7,10 @@ plugins {
 android {
     namespace = "me.rerere.rikkahub.material3"
     sourceSets {
-        // 子模块 material-color-utilities 在本模块目录下（此前写成
-        // "../material-color-utilities/java"，指向了不存在的仓库根路径）。
-        getByName("main").java.srcDir("material-color-utilities/java")
+        // 子模块 material-color-utilities 就在本模块目录下（重构时误写成
+        // "../material-color-utilities/java"，路径与源语言都不对）；
+        // 上游与本仓库初始导入用的都是 kotlin 目录。
+        getByName("main").kotlin.srcDir("material-color-utilities/kotlin")
     }
 }
 
