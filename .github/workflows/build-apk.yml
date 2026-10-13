@@ -49,6 +49,47 @@ jobs:
             ~/.gradle/wrapper
           key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
 
+      # :workspace 模块启用了 CMake 原生构建，需要 NDK。
+      # 交给 AGP 自动下载时偶发 "Error reading Zip content from a SeekableByteChannel"
+      # （下载包损坏）且一次失败就整轮报废，所以这里显式用 sdkmanager 预装并重试；
+      # 若 runner 已自带该版本，命令本身就是幂等 no-op。
+      #
+      # 用 `bash {0}` 显式接管 shell：默认的 `bash -eo pipefail` 下，
+      # `yes | sdkmanager` 会因为 yes 收到 SIGPIPE 退出 141，导致 pipefail
+      # 把「安装成功」误判成失败。
+      - name: 预装 NDK（带重试，规避 AGP 自动下载损坏）
+        shell: bash {0}
+        env:
+          NDK_VERSION: "28.2.13676358"
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f 2>/dev/null | head -1)"
+          fi
+          echo "using sdkmanager: ${SDKMANAGER:-none}"
+          if [ -z "${SDKMANAGER:-}" ] || [ -z "${ANDROID_HOME:-}" ]; then
+            echo "runner 上没有 sdkmanager/ANDROID_HOME，交给 AGP 自行下载"
+            exit 0
+          fi
+          yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses > /dev/null 2>&1
+          ok=0
+          for attempt in 1 2 3 4 5; do
+            echo "--- sdkmanager attempt $attempt ---"
+            if yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" "ndk;$NDK_VERSION"; then
+              ok=1
+              echo "NDK 安装成功（attempt $attempt）"
+              break
+            fi
+            echo "attempt $attempt 失败，清理半成品后重试"
+            rm -rf "$ANDROID_HOME/ndk/$NDK_VERSION"
+            sleep 5
+          done
+          if [ "$ok" != "1" ]; then
+            echo "sdkmanager 安装失败，最终交给 AGP 再试一次"
+          fi
+          ls -d "$ANDROID_HOME/ndk/"* 2>/dev/null
+          exit 0
+
       - name: 打包 Debug APK
         run: |
           chmod +x gradlew
