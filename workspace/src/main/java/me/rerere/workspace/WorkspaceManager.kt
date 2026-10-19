@@ -185,24 +185,99 @@ class WorkspaceManager(
         stdin: ByteArray? = null,
     ): WorkspaceCommandResult {
         require(command.isNotBlank()) { "Command is required" }
+        return shellRunner.execute(
+            buildShellContext(root = root, command = command, cwd = cwd, timeoutMillis = timeoutMillis)
+                .copy(stdin = stdin)
+        )
+    }
+
+    /**
+     * 构建一次 Rootfs 执行所需的目录/挂载上下文。
+     *
+     * 抽取出来是为了让「一次性 shell 命令」与「常驻进程」（例如 MCP stdio 服务器）
+     * 共用同一份目录与挂载表，避免两条路径各拼一套 proot 参数而漂移。
+     */
+    fun buildShellContext(
+        root: String,
+        command: String,
+        cwd: String = "",
+        timeoutMillis: Long = DEFAULT_COMMAND_TIMEOUT_MS,
+    ): WorkspaceShellContext {
         val workingDir = fileSystem.resolve(filesDir(root), cwd)
         require(workingDir.exists()) { "Working directory does not exist: $cwd" }
         require(workingDir.isDirectory) { "Working path is not a directory: $cwd" }
-
-        return shellRunner.execute(
-            WorkspaceShellContext(
-                root = root,
-                command = command,
-                cwd = cwd,
-                filesDir = filesDir(root),
-                linuxDir = linuxDir(root),
-                tempDir = tempDir(root),
-                workingDir = workingDir,
-                timeoutMillis = timeoutMillis,
-                stdin = stdin,
-                bindMounts = bindMounts,
-            )
+        return WorkspaceShellContext(
+            root = root,
+            command = command,
+            cwd = cwd,
+            filesDir = filesDir(root),
+            linuxDir = linuxDir(root),
+            tempDir = tempDir(root),
+            workingDir = workingDir,
+            timeoutMillis = timeoutMillis,
+            bindMounts = bindMounts,
         )
+    }
+
+    fun launchProcess(
+        root: String,
+        command: String,
+        cwd: String = "",
+        extraEnv: List<Pair<String, String>> = emptyList(),
+        onStderrLine: ((String) -> Unit)? = null,
+    ): LaunchedWorkspaceProcess {
+        require(command.isNotBlank()) { "Command is required" }
+        val runner = shellRunner as? WorkspaceProcessLauncher
+            ?: throw IllegalStateException("Current shell runner does not support long-running processes")
+        ensureWorkspace(root)
+        if (!hasRootfs(root)) {
+            throw IllegalStateException("Rootfs is not installed for workspace '$root'")
+        }
+        // timeoutMillis 对长驻进程无意义（不 waitFor）, 仅用于保持上下文构造一致。
+        // loginShell=false: 长驻进程多为协议服务（如 MCP stdio）, 登录 shell 的
+        // profile/motd 输出会污染 stdout 的换行分帧。
+        return runner.launch(
+            context = buildShellContext(root = root, command = command, cwd = cwd)
+                .copy(extraEnv = extraEnv, loginShell = false),
+            onStderrLine = onStderrLine,
+        )
+    }
+
+    /** 宿主（非 Rootfs）长驻进程：用于直接跑设备上已有的可执行文件。 */
+    fun launchHostProcess(
+        command: String,
+        cwdRoot: String = "",
+        extraEnv: List<Pair<String, String>> = emptyList(),
+        onStderrLine: ((String) -> Unit)? = null,
+    ): LaunchedWorkspaceProcess {
+        require(command.isNotBlank()) { "Command is required" }
+        // 宿主模式固定用 HostShellRunner: 注入的 shellRunner 在本机是 ProotShellRunner,
+        // 它要求 linuxDir 下有 rootfs, 而「跑设备本机可执行文件」恰恰不该依赖 rootfs。
+        val runner: WorkspaceProcessLauncher = when {
+            cwdRoot.isBlank() -> HostShellRunner()
+            else -> shellRunner as? WorkspaceProcessLauncher
+                ?: throw IllegalStateException("Current shell runner does not support long-running processes")
+        }
+        val context = if (cwdRoot.isBlank()) {
+            WorkspaceShellContext(
+                root = "host",
+                command = command,
+                cwd = "",
+                filesDir = baseDir.apply { mkdirs() },
+                linuxDir = baseDir,
+                tempDir = File(baseDir, ".tmp").apply { mkdirs() },
+                workingDir = baseDir,
+                timeoutMillis = DEFAULT_COMMAND_TIMEOUT_MS,
+                bindMounts = emptyList(),
+                extraEnv = extraEnv,
+                loginShell = false,
+            )
+        } else {
+            ensureWorkspace(cwdRoot)
+            buildShellContext(root = cwdRoot, command = command)
+                .copy(root = cwdRoot, extraEnv = extraEnv, loginShell = false)
+        }
+        return runner.launch(context = context, onStderrLine = onStderrLine)
     }
 
     private fun requireValidRoot(root: String) {

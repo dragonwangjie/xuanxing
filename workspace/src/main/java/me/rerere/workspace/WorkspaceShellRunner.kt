@@ -20,15 +20,53 @@ data class WorkspaceShellContext(
     val timeoutMillis: Long,
     val stdin: ByteArray? = null,
     val bindMounts: List<WorkspaceBindMount> = emptyList(),
+    /**
+     * 追加到子进程环境的变量。Rootfs 路径的基础环境是用 `env -i` 显式构造的,
+     * 因此这里必须并入同一个 env 调用, 否则事后 put 不进 proot 内部。
+     */
+    val extraEnv: List<Pair<String, String>> = emptyList(),
+    /**
+     * 是否用登录 shell（`bash -l`）。一次性命令需要它来拿到交互式 PATH;
+     * 但登录 shell 可能向 stdout 打印 profile/motd, 会污染换行分隔的 JSON-RPC 分帧,
+     * 所以长驻协议类进程必须传 false。
+     */
+    val loginShell: Boolean = true,
 )
 
-class HostShellRunner : WorkspaceShellRunner {
-    override fun execute(context: WorkspaceShellContext): WorkspaceCommandResult {
+class HostShellRunner : WorkspaceShellRunner, WorkspaceProcessLauncher {
+override fun execute(context: WorkspaceShellContext): WorkspaceCommandResult {
         val process = ProcessBuilder(defaultShell(), "-c", context.command)
             .directory(context.workingDir)
             .redirectErrorStream(false)
+            .applyEnv(context)
             .start()
         return process.readResult(context.timeoutMillis, context.stdin)
+    }
+
+    override fun launch(
+        context: WorkspaceShellContext,
+        onStderrLine: ((String) -> Unit)?,
+    ): LaunchedWorkspaceProcess {
+        val process = ProcessBuilder(defaultShell(), "-c", context.command)
+            .directory(context.workingDir)
+            .redirectErrorStream(false)
+            .applyEnv(context)
+            .start()
+        return LaunchedWorkspaceProcess(
+            context = context,
+            process = process,
+            onStderrLine = onStderrLine,
+        )
+    }
+
+    /**
+     * 宿主模式也要应用 extraEnv: 之前只有 ProotShellRunner 应用了, 导致
+     * 「Rootfs 留空直接跑设备上可执行文件」这条路径上 MCP 服务器配置的 env 静默失效。
+     */
+    private fun ProcessBuilder.applyEnv(context: WorkspaceShellContext): ProcessBuilder = apply {
+        context.extraEnv.forEach { (key, value) ->
+            if (key.isNotBlank()) environment()[key] = value
+        }
     }
 
     private fun defaultShell(): String =
