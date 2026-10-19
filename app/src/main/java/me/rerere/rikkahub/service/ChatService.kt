@@ -93,6 +93,15 @@ import kotlin.uuid.Uuid
 
 private const val TAG = "ChatService"
 
+/**
+ * 后台生成（自动标题 / 建议 / 压缩）的参数装配。
+ *
+ * reasoningLevel 保持 AUTO = 不改动任何线上行为：AUTO 不发推理参数, 由服务端按模型默认处理。
+ * 这里**不要**随手改成 OFF：OFF 会主动下发「显式关闭推理」的参数
+ * （ChatCompletionsAPI 的 DeepSeek 分支发 thinking:{type:"disabled"}、openrouter 发 effort:"none"）,
+ * 而部分纯推理模型会直接拒绝该参数并报错。OFF 确实能省下标题/压缩这些机械任务的思维 token,
+ * 但那是需要按 provider 逐个验证的独立改动, 不该混在修测试的提交里。
+ */
 internal fun backgroundTextGenerationParams(
     model: Model,
     reasoningLevel: ReasoningLevel = ReasoningLevel.AUTO,

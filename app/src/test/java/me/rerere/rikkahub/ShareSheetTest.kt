@@ -40,8 +40,10 @@ class ShareSheetTest {
         assertEquals("Test OpenAI", decodedOpenAI.name)
         assertEquals("sk-test-key", decodedOpenAI.apiKey)
         assertEquals("https://api.openai.com/v1", decodedOpenAI.baseUrl)
-        assertEquals(1, decodedOpenAI.models.size)
-        assertEquals("gpt-4", decodedOpenAI.models[0].displayName)
+        // 分享码按设计只带连接配置：encodeForShare 用 copyProvider(models = emptyList())
+        // 主动剔除模型列表（模型是各自从服务端拉取的，且可能有几百条，不该塞进分享码）。
+        // 因此这里断言的是「被剔除」而不是「原样恢复」。
+        assertEquals(0, decodedOpenAI.models.size)
     }
 
     @Test
