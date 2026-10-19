@@ -311,3 +311,13 @@ dependencies {
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
 }
+
+// slf4j-android 绑定在初始化时调用 android.util.Log, 纯 JVM 单元测试里会抛
+// ExceptionInInitializerError —— MCP SDK 的 StdioClientTransport 构造时就会初始化 logger,
+// 于是任何用到它的 JVM 测试都跑不起来。产品侧照常保留该绑定, 只从单元测试的运行 classpath
+// 排除; slf4j 找不到 provider 时自动降级为 NOP, 测试不需要日志。
+configurations.configureEach {
+    if (name.endsWith("UnitTestRuntimeClasspath")) {
+        exclude(group = "uk.uuid.slf4j", module = "slf4j-android")
+    }
+}

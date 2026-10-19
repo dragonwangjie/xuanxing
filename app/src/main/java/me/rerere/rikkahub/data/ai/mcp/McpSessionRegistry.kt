@@ -37,6 +37,7 @@ import kotlinx.serialization.json.JsonObject
 import me.rerere.ai.core.InputSchema
 import me.rerere.rikkahub.AppScope
 import me.rerere.rikkahub.data.datastore.SettingsStore
+import me.rerere.workspace.WorkspaceManager
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.time.Duration.Companion.seconds
 import kotlin.uuid.Uuid
@@ -61,6 +62,17 @@ private class McpSession(initialConfig: McpServerConfig) {
     val lifecycleMutex = Mutex()
     var reconnectJob: Job? = null
     var reconnectAttempt: Int = 0
+
+    /**
+     * stdio 传输专属: 子进程句柄。
+     * transport.close() 只关流, 不保证回收 proot/bash 孙进程, 因此进程必须由会话显式销毁,
+     * 否则每次重连都会漏一个常驻进程。
+     */
+    @Volatile
+    var stdioProcess: McpStdioConnection? = null
+
+    /** stdio 进程意外退出的重启计数（上限见 StdioServer.maxRestartAttempts）。 */
+    var stdioRestartAttempt: Int = 0
 }
 
 private sealed interface ConnectResult {
@@ -100,6 +112,7 @@ internal class McpSessionRegistry(
     private val httpClient: HttpClient,
     private val oauthCoordinator: McpOAuthCoordinator,
     private val statusStore: McpStatusStore,
+    private val workspaceManager: WorkspaceManager,
 ) {
     private val sessions = ConcurrentHashMap<Uuid, McpSession>()
 
@@ -234,7 +247,7 @@ internal class McpSessionRegistry(
             oldClient?.let { closeClient(it, config.commonOptions.name) }
 
             val sdkClient = createSdkClient(config)
-            val transport = createTransport(config)
+            val transport = createTransport(session, config)
             installTransportCallbacks(config, sdkClient, transport)
 
             try {
@@ -244,6 +257,7 @@ internal class McpSessionRegistry(
                     !hasSameConnectionParameters(config, syncedConfig)
                 ) {
                     closeClient(sdkClient, config.commonOptions.name)
+                    destroyStdioProcess(session)
                     return@withLock ConnectResult.Stale
                 }
 
@@ -256,9 +270,13 @@ internal class McpSessionRegistry(
                 ConnectResult.Success
             } catch (e: CancellationException) {
                 closeClient(sdkClient, config.commonOptions.name)
+                destroyStdioProcess(session)
                 throw e
             } catch (e: Exception) {
                 closeClient(sdkClient, config.commonOptions.name)
+                // 连接失败（命令写错/依赖缺失/启动即崩溃）时必须回收进程,
+                // 否则每次重试都会累积一个孤儿 proot 进程。
+                destroyStdioProcess(session)
                 Log.e(TAG, "Failed to connect MCP server ${config.id}", e)
                 if (oauthCoordinator.needsAuthorization(config, e)) {
                     statusStore.update(config.id, McpStatus.NeedsAuthorization)
@@ -319,7 +337,12 @@ internal class McpSessionRegistry(
             old.copy(
                 mcpServers = old.mcpServers.map { storedConfig ->
                     if (storedConfig.id != connectionConfig.id) return@map storedConfig
-                    val tools = mergeTools(storedConfig.commonOptions.tools, serverTools)
+                    val tools = mergeTools(
+                        storedTools = storedConfig.commonOptions.tools,
+                        serverTools = serverTools,
+                        // 懒加载服务器上服务器新增的工具默认走搜索, 不自动 pin 进上下文
+                        defaultEnabledForNewTools = !storedConfig.commonOptions.lazyTools,
+                    )
                     storedConfig.clone(commonOptions = storedConfig.commonOptions.copy(tools = tools))
                         .also { updatedConfig = it }
                 }
@@ -361,7 +384,12 @@ internal class McpSessionRegistry(
                 if (session.reconnectJob?.isActive == true) return@withLock
 
                 val attempt = session.reconnectAttempt + 1
-                if (attempt > MAX_RECONNECT_ATTEMPTS) {
+                // stdio 的重连等于重新 spawn 进程: 崩溃多为确定性原因（命令写错/依赖缺失）,
+                // 用配置里较小的上限, 避免把一个坏命令变成无限重启循环。
+                val cap = (session.config as? McpServerConfig.StdioServer)?.maxRestartAttempts
+                    ?.coerceIn(0, MAX_RECONNECT_ATTEMPTS)
+                    ?: MAX_RECONNECT_ATTEMPTS
+                if (attempt > cap) {
                     val failedClient = session.client
                     session.client = null
                     session.connectedConfig = null
@@ -414,10 +442,13 @@ internal class McpSessionRegistry(
             session.reconnectJob?.cancel()
             session.reconnectJob = null
             session.reconnectAttempt = 0
+            session.stdioRestartAttempt = 0
             val sdkClient = session.client
             session.client = null
             session.connectedConfig = null
             sdkClient?.let { closeClient(it, session.config.commonOptions.name) }
+            // client.close() 只关流; proot 与 Rootfs 内的孙进程要靠这里显式回收。
+            destroyStdioProcess(session)
         }
     }
 
@@ -430,7 +461,7 @@ internal class McpSessionRegistry(
         clientInfo = Implementation(name = config.commonOptions.name, version = "1.0")
     )
 
-    private fun createTransport(config: McpServerConfig): AbstractTransport = when (config) {
+    private fun createTransport(session: McpSession, config: McpServerConfig): AbstractTransport = when (config) {
         is McpServerConfig.SseTransportServer -> SseClientTransport(
             urlString = config.url,
             client = httpClient,
@@ -442,6 +473,32 @@ internal class McpSessionRegistry(
             client = httpClient,
             requestBuilder = { appendResolvedHeaders(config) },
         )
+
+        is McpServerConfig.StdioServer -> {
+            // 先回收上一个进程再拉起新的: 重连路径可能残留旧进程,
+            // 两个进程同时读写同一个 workspace 会互相踩踏。
+            session.stdioProcess?.let { stale ->
+                Log.i(TAG, "Destroying stale stdio process for ${config.commonOptions.name}")
+                runCatching { stale.close() }
+            }
+            val connection = McpStdioLauncher.launch(
+                config = config,
+                workspaceManager = workspaceManager,
+                onStderr = { line ->
+                    Log.d(TAG, "stdio[${config.commonOptions.name}] $line")
+                },
+            )
+            session.stdioProcess = connection
+            connection.transport
+        }
+    }
+
+    /** 只回收进程, 不动 transport（transport 由 client.close() 负责）。 */
+    private fun destroyStdioProcess(session: McpSession) {
+        val connection = session.stdioProcess ?: return
+        session.stdioProcess = null
+        runCatching { connection.close() }
+            .onFailure { Log.w(TAG, "Failed to destroy stdio process", it) }
     }
 
     private fun HttpRequestBuilder.appendResolvedHeaders(config: McpServerConfig) {
@@ -469,17 +526,32 @@ internal data class McpConnectionKey(
     val serverUrl: String,
     val clientName: String,
     val headers: List<Pair<String, String>>,
+    /** stdio 专属: 命令/参数/环境/位置任一变化都必须重连（HTTP 服务器为空）。 */
+    val stdioCommand: List<String> = emptyList(),
+    val stdioEnv: List<Pair<String, String>> = emptyList(),
 )
 
-internal fun McpServerConfig.connectionKey(): McpConnectionKey = McpConnectionKey(
-    transportType = when (this) {
-        is McpServerConfig.SseTransportServer -> "sse"
-        is McpServerConfig.StreamableHTTPServer -> "streamable_http"
-    },
-    serverUrl = serverUrl,
-    clientName = commonOptions.name,
-    headers = resolvedHeaders(),
-)
+internal fun McpServerConfig.connectionKey(): McpConnectionKey = when (this) {
+    is McpServerConfig.StdioServer -> McpConnectionKey(
+        transportType = "stdio",
+        serverUrl = serverUrl,
+        clientName = commonOptions.name,
+        headers = resolvedHeaders(),
+        stdioCommand = listOf(command) + args + listOf("cwd=$cwd", "root=${workspaceRoot.orEmpty()}"),
+        stdioEnv = env,
+    )
+
+    else -> McpConnectionKey(
+        transportType = when (this) {
+            is McpServerConfig.SseTransportServer -> "sse"
+            is McpServerConfig.StreamableHTTPServer -> "streamable_http"
+            is McpServerConfig.StdioServer -> "stdio"
+        },
+        serverUrl = serverUrl,
+        clientName = commonOptions.name,
+        headers = resolvedHeaders(),
+    )
+}
 
 private fun hasSameConnectionParameters(
     left: McpServerConfig?,
@@ -497,7 +569,12 @@ private fun McpServerConfig.resolvedHeaders(): List<Pair<String, String>> {
     }
 }
 
-private fun mergeTools(storedTools: List<McpTool>, serverTools: List<Tool>): List<McpTool> {
+private fun mergeTools(
+    storedTools: List<McpTool>,
+    serverTools: List<Tool>,
+    /** 懒加载服务器上「新出现的工具」默认不启用, 否则等于自动 pin, 懒加载静默失效。 */
+    defaultEnabledForNewTools: Boolean = true,
+): List<McpTool> {
     val toolsByName = storedTools.associateBy { it.name }
     return serverTools.map { serverTool ->
         toolsByName[serverTool.name]?.copy(
@@ -506,7 +583,7 @@ private fun mergeTools(storedTools: List<McpTool>, serverTools: List<Tool>): Lis
         ) ?: McpTool(
             name = serverTool.name,
             description = serverTool.description,
-            enable = true,
+            enable = defaultEnabledForNewTools,
             inputSchema = serverTool.inputSchema.toSchema(),
         )
     }

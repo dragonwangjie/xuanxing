@@ -29,6 +29,12 @@ data class Conversation(
     val lorebookIds: Set<Uuid> = emptySet(),
     // Absolute path inside the workspace rootfs
     val workspaceCwd: String? = null,
+    /**
+     * 本会话内通过 MCP 工具搜索「展开」过的工具全名（serverId/toolName）。
+     * 懒加载服务器默认只暴露搜索元工具; 搜到的工具在这里累积后, 后续轮次可直接调用,
+     * 无需重复搜索。作用域限定在会话, 避免会话间互相污染上下文。
+     */
+    val expandedMcpTools: Set<String> = emptySet(),
     // 所属文件夹（助手内分组），null 表示未归入任何文件夹
     val folderId: Uuid? = null,
     @Transient

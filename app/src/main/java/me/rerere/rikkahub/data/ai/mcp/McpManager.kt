@@ -26,6 +26,7 @@ import me.rerere.rikkahub.data.event.AppEventBus
 import me.rerere.rikkahub.data.files.FilesManager
 import me.rerere.rikkahub.data.files.saveUploadFromBytes
 import me.rerere.rikkahub.utils.JsonInstant
+import me.rerere.workspace.WorkspaceManager
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 import kotlin.io.encoding.Base64
@@ -42,6 +43,7 @@ class McpManager(
     private val appScope: AppScope,
     private val filesManager: FilesManager,
     appEventBus: AppEventBus,
+    workspaceManager: WorkspaceManager,
 ) {
     private val okHttpClient = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
@@ -78,6 +80,7 @@ class McpManager(
         httpClient = httpClient,
         oauthCoordinator = oauthCoordinator,
         statusStore = statusStore,
+        workspaceManager = workspaceManager,
     )
 
     init {
@@ -106,6 +109,53 @@ class McpManager(
                     .filter { tool -> tool.enable }
                     .map { tool -> Triple(server.id, server.commonOptions.name, tool) }
             }
+    }
+
+    /** 懒加载路由结果: 直接注入的工具 + 需要搜索元工具的服务器。 */
+    fun toolExposure(expandedTools: Set<String>): McpToolRouter.Exposure {
+        val settings = settingsStore.settingsFlow.value
+        val assistant = settings.getCurrentAssistant()
+        return McpToolRouter.exposure(
+            servers = settings.mcpServers.filter { it.id in assistant.mcpServers },
+            expandedTools = expandedTools,
+        )
+    }
+
+    /**
+     * 搜索某个服务器的隐藏工具并「展开」到会话: 返回展开的 key 与给模型的说明文本。
+     * 只读本地已同步的工具清单, 不发 RPC。
+     */
+    fun searchTools(
+        serverId: Uuid,
+        query: String,
+        expandedTools: Set<String>,
+    ): Pair<Set<String>, List<UIMessagePart>> {
+        val settings = settingsStore.settingsFlow.value
+        val server = settings.mcpServers.firstOrNull { it.id == serverId }
+            ?: return emptySet<String>() to listOf(
+                UIMessagePart.Text("MCP server $serverId no longer exists")
+            )
+        val serverName = server.commonOptions.name
+        val prefix = "mcp__${serverName}__"
+        val found = McpToolRouter.search(server, query)
+        val foundNames = found.map { it.name }.toSet()
+        val keys = found.map { McpToolRouter.toolKey(serverId, it.name) }.toSet()
+        // 与 availableCount 同一口径(injectableHiddenTools), 否则报给模型的剩余数会虚高
+        val remaining = McpToolRouter
+            .injectableHiddenTools(server, expandedTools)
+            .count { it.name !in foundNames }
+        val text = McpToolRouter.formatSearchResults(
+            serverName = serverName,
+            expandedPrefix = prefix,
+            found = found,
+            remaining = remaining,
+            candidateNames = if (found.isEmpty()) {
+                McpToolRouter.injectableHiddenTools(server, expandedTools).map { it.name }.sorted()
+            } else {
+                emptyList()
+            },
+        )
+        return keys to listOf(UIMessagePart.Text(text))
     }
 
     suspend fun callTool(serverId: Uuid, toolName: String, args: JsonObject): List<UIMessagePart> {

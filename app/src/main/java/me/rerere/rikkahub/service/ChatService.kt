@@ -47,6 +47,7 @@ import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.ai.GenerationChunk
 import me.rerere.rikkahub.data.ai.GenerationHandler
 import me.rerere.rikkahub.data.ai.mcp.McpManager
+import me.rerere.rikkahub.data.ai.mcp.createMcpSearchTool
 import me.rerere.rikkahub.data.ai.tools.createConversationTools
 import me.rerere.rikkahub.data.ai.tools.local.LocalTools
 import me.rerere.rikkahub.data.ai.tools.createSearchTools
@@ -509,7 +510,12 @@ class ChatService(
 
             // memory tool
             if (!model.abilities.contains(ModelAbility.TOOL)) {
-                if (assistant.enableWebSearch || mcpManager.getAllAvailableTools().isNotEmpty()) {
+                // 用 toolExposure 而不是 getAllAvailableTools: 懒加载服务器即使一个工具都没 pin,
+                // 也会占用搜索元工具, 同样要求模型具备工具调用能力。
+                val hasMcpTools = !mcpManager
+                    .toolExposure(initialConversation.expandedMcpTools)
+                    .isEmpty
+                if (assistant.enableWebSearch || hasMcpTools) {
                     addError(
                         IllegalStateException(context.getString(R.string.tools_warning)),
                         conversationId,
@@ -568,11 +574,12 @@ class ChatService(
                             )
                         )
                     }
-                    mcpManager.getAllAvailableTools().also { allTools ->
-                        val invalidNames = allTools
-                            .map { it.second }
-                            .distinct()
-                            .filter { name -> name.isEmpty() || !name.all { it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' } }
+                    mcpManager.toolExposure(conversation.expandedMcpTools).also { exposure ->
+                        val invalidNames = (
+                            exposure.direct.map { it.second } + exposure.lazyServers.map { it.serverName }
+                            ).distinct().filter { name ->
+                            name.isEmpty() || !name.all { it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' }
+                        }
                         if (invalidNames.isNotEmpty()) {
                             addError(
                                 error = IllegalStateException(
@@ -585,18 +592,39 @@ class ChatService(
                             )
                             return
                         }
-                    }.forEach { (serverId, serverName, tool) ->
-                        add(
-                            Tool(
-                                name = "mcp__${serverName}__${tool.name}",
-                                description = tool.description ?: "",
-                                parameters = { tool.inputSchema },
-                                needsApproval = { tool.needsApproval },
-                                execute = {
-                                    mcpManager.callTool(serverId, tool.name, it.jsonObject)
-                                },
+                        exposure.direct.forEach { (serverId, serverName, tool) ->
+                            add(
+                                Tool(
+                                    name = "mcp__${serverName}__${tool.name}",
+                                    description = tool.description ?: "",
+                                    parameters = { tool.inputSchema },
+                                    needsApproval = { tool.needsApproval },
+                                    execute = {
+                                        mcpManager.callTool(serverId, tool.name, it.jsonObject)
+                                    },
+                                )
                             )
-                        )
+                        }
+                        // 懒加载服务器只占一个 function 槽位; 搜索结果写回会话的
+                        // expandedMcpTools, 下一轮即可直接调用被展开的工具。
+                        exposure.lazyServers.forEach { lazyServer ->
+                            if (lazyServer.availableCount <= 0) return@forEach
+                            add(
+                                createMcpSearchTool(
+                                    lazyServer = lazyServer,
+                                    sampleTools = lazyServer.samples,
+                                    manager = mcpManager,
+                                    expandedTools = conversation.expandedMcpTools,
+                                    onExpand = { keys: Set<String> ->
+                                        updateConversationState(conversationId) { current ->
+                                            current.copy(
+                                                expandedMcpTools = current.expandedMcpTools + keys
+                                            )
+                                        }
+                                    },
+                                )
+                            )
+                        }
                     }
                 },
             ).onCompletion {

@@ -27,6 +27,8 @@ RikkaHub 使用 **AGPL-3.0** 许可证发布，因此本项目（玄星）同样
 
 - **逆向工作台**：预置连接本机逆向 MCP 后端（MT 管理器 / 玄星逆核 / ProxyPin），
   一键探测端口，配套逆向技能与 system prompt。
+  依赖本机工具链的 stdio 后端（如 REA）不做预置，手动配置指南见
+  [docs/references/mcp-stdio-manual-config.md](docs/references/mcp-stdio-manual-config.md)。
 - **内置技能库**：打包了一批安卓逆向/安全分析技能文档。
 - **玄星高级功能**：AI 生成悬浮球、消息保活前台服务、自动压缩会话、持续工作等。
 - **界面与品牌**：玄星紫色主题、首页仪表盘、底部导航等 UI 调整。
